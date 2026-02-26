@@ -1,0 +1,75 @@
+[
+  {
+    "id": "sample1",
+    "name": "Spaghetti Aglio e Olio",
+    "servings": 2,
+    "tags": [
+      "quick",
+      "veggie"
+    ],
+    "ingredients": [
+      {
+        "name": "spaghetti",
+        "qty": 200,
+        "unit": "g"
+      },
+      {
+        "name": "garlic cloves",
+        "qty": 3,
+        "unit": ""
+      },
+      {
+        "name": "olive oil",
+        "qty": 2,
+        "unit": "tbsp"
+      },
+      {
+        "name": "chilli flakes",
+        "qty": 0.5,
+        "unit": "tsp"
+      },
+      {
+        "name": "parsley",
+        "qty": 5,
+        "unit": "g"
+      }
+    ],
+    "steps": "Boil pasta. Gently fry sliced garlic in olive oil with chilli. Toss pasta with oil, parsley, and a splash of pasta water. Season."
+  },
+  {
+    "id": "sample2",
+    "name": "Chicken Stir-Fry",
+    "servings": 2,
+    "tags": [
+      "quick"
+    ],
+    "ingredients": [
+      {
+        "name": "chicken breast",
+        "qty": 250,
+        "unit": "g"
+      },
+      {
+        "name": "soy sauce",
+        "qty": 2,
+        "unit": "tbsp"
+      },
+      {
+        "name": "mixed veg",
+        "qty": 300,
+        "unit": "g"
+      },
+      {
+        "name": "garlic cloves",
+        "qty": 2,
+        "unit": ""
+      },
+      {
+        "name": "ginger",
+        "qty": 1,
+        "unit": "tsp"
+      }
+    ],
+    "steps": "Stir-fry chicken, add aromatics and vegetables, splash soy, cook until done."
+  }
+]

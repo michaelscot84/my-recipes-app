@@ -1,0 +1,312 @@
+// Basic offline-first recipe app using localStorage
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => Array.from(document.querySelectorAll(s));
+
+const store = {
+  get(key, fallback){
+    try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
+  },
+  set(key, value){ localStorage.setItem(key, JSON.stringify(value)); }
+};
+
+// Data keys
+const KEYS = { recipes: 'rb_recipes', plan: 'rb_plan', pantry: 'rb_pantry', shoppingChecked: 'rb_shop_checked' };
+
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+function parseIngredientLine(line){
+  // Simple parser: qty (number) [unit] name
+  line = line.trim(); if(!line) return null;
+  const m = line.match(/^([0-9]*\.?[0-9]+)\s+([a-zA-Zμ°/]+)?\s*(.*)$/);
+  if(m){
+    const qty = parseFloat(m[1]);
+    const unit = (m[2] || '').trim();
+    const name = (m[3] || '').trim() || unit; // if only name provided
+    return { name: name || line, qty: isNaN(qty) ? 1 : qty, unit: unit && name!==unit ? unit : '' };
+  }
+  // Fallback: treat entire line as name
+  return { name: line, qty: 1, unit: '' };
+}
+
+function formatIngredient(i){
+  const qty = i.qty % 1 === 0 ? i.qty : i.qty.toFixed(2).replace(/\.00$/, '');
+  return `${qty}${i.unit? ' ' + i.unit : ''} ${i.name}`;
+}
+
+function loadSampleIfEmpty(){
+  const recipes = store.get(KEYS.recipes, []);
+  if(recipes.length === 0){
+    fetch('data/sample_recipes.json').then(r=>r.json()).then(sample=>{
+      store.set(KEYS.recipes, sample);
+      renderRecipes();
+      refreshPlanSelect();
+    }).catch(()=>{});
+  }
+}
+
+// Tabs
+function activateTab(name){
+  $$('.tab').forEach(t => t.classList.remove('active'));
+  $('#tab-' + name).classList.add('active');
+  $$('.tab-btn').forEach(b => b.classList.remove('active'));
+  $$('.tab-btn').find(b=>b.dataset.tab===name)?.classList.add('active');
+}
+
+// Recipes UI
+function renderRecipes(){
+  const filter = $('#search').value.trim().toLowerCase();
+  const ul = $('#recipeList'); ul.innerHTML = '';
+  const recipes = store.get(KEYS.recipes, []);
+  recipes
+    .filter(r => !filter || r.name.toLowerCase().includes(filter) || (r.tags||[]).some(t=>t.toLowerCase().includes(filter)))
+    .sort((a,b)=>a.name.localeCompare(b.name))
+    .forEach(r => {
+      const li = document.createElement('li'); li.className='card';
+      li.innerHTML = `
+        <h3>${r.name}</h3>
+        <div class="tags">Servings: ${r.servings || 2} • Tags: ${(r.tags||[]).join(', ') || '—'}</div>
+        <div class="row">
+          <button data-act="view">View</button>
+          <button data-act="edit">Edit</button>
+          <button data-act="delete" class="danger">Delete</button>
+          <button data-act="addToPlan" class="secondary">Add to Plan</button>
+        </div>
+      `;
+      li.querySelector('[data-act=view]').onclick = () => viewRecipe(r);
+      li.querySelector('[data-act=edit]').onclick = () => openRecipeDialog(r);
+      li.querySelector('[data-act=delete]').onclick = () => { if(confirm('Delete this recipe?')){ delRecipe(r.id); } };
+      li.querySelector('[data-act=addToPlan]').onclick = () => { addToPlan(r.id); };
+      ul.appendChild(li);
+    });
+}
+
+function viewRecipe(r){
+  const lines = (r.ingredients||[]).map(formatIngredient).map(x=>`• ${x}`).join('\n');
+  alert(`${r.name}\n\nServings: ${r.servings || 2}\nTags: ${(r.tags||[]).join(', ') || '—'}\n\nIngredients:\n${lines}\n\nSteps:\n${r.steps || '—'}`);
+}
+
+function openRecipeDialog(r){
+  $('#recipeDialogTitle').textContent = r ? 'Edit Recipe' : 'New Recipe';
+  $('#recipeId').value = r?.id || '';
+  $('#recipeName').value = r?.name || '';
+  $('#recipeServings').value = r?.servings || 2;
+  $('#recipeTags').value = (r?.tags||[]).join(', ');
+  $('#recipeIngredients').value = (r?.ingredients||[]).map(formatIngredient).join('\n');
+  $('#recipeSteps').value = r?.steps || '';
+  $('#recipeDialog').showModal();
+}
+
+function saveRecipeFromDialog(){
+  const id = $('#recipeId').value || uid();
+  const name = $('#recipeName').value.trim(); if(!name){ alert('Name is required'); return; }
+  const servings = Math.max(1, parseInt($('#recipeServings').value || '2', 10));
+  const tags = $('#recipeTags').value.split(',').map(t=>t.trim()).filter(Boolean);
+  const ingredients = $('#recipeIngredients').value.split('\n').map(parseIngredientLine).filter(Boolean);
+  const steps = $('#recipeSteps').value;
+  const recipes = store.get(KEYS.recipes, []);
+  const idx = recipes.findIndex(x=>x.id===id);
+  const rec = { id, name, servings, tags, ingredients, steps };
+  if(idx>=0) recipes[idx] = rec; else recipes.push(rec);
+  store.set(KEYS.recipes, recipes);
+  $('#recipeDialog').close();
+  renderRecipes();
+  refreshPlanSelect();
+}
+
+function delRecipe(id){
+  const recipes = store.get(KEYS.recipes, []).filter(r=>r.id!==id);
+  store.set(KEYS.recipes, recipes);
+  renderRecipes();
+  refreshPlanSelect();
+}
+
+// Plan
+function refreshPlanSelect(){
+  const sel = $('#addToPlanSelect'); sel.innerHTML = '';
+  const opt0 = document.createElement('option'); opt0.value=''; opt0.textContent = 'Choose recipe…'; sel.appendChild(opt0);
+  const recipes = store.get(KEYS.recipes, []).sort((a,b)=>a.name.localeCompare(b.name));
+  for(const r of recipes){
+    const o = document.createElement('option'); o.value=r.id; o.textContent=r.name; sel.appendChild(o);
+  }
+  renderPlan();
+}
+
+function addToPlan(id){
+  const plan = store.get(KEYS.plan, []);
+  if(!id){ id = $('#addToPlanSelect').value; }
+  if(!id) return;
+  if(!plan.includes(id)) plan.push(id);
+  store.set(KEYS.plan, plan);
+  renderPlan();
+}
+
+function removeFromPlan(id){
+  const plan = store.get(KEYS.plan, []).filter(x=>x!==id);
+  store.set(KEYS.plan, plan);
+  renderPlan();
+}
+
+function clearPlan(){ store.set(KEYS.plan, []); renderPlan(); }
+
+function renderPlan(){
+  const planUl = $('#planList'); planUl.innerHTML = '';
+  const recipes = store.get(KEYS.recipes, []);
+  const plan = store.get(KEYS.plan, []);
+  for(const id of plan){
+    const r = recipes.find(x=>x.id===id); if(!r) continue;
+    const li = document.createElement('li'); li.className='chip';
+    li.innerHTML = `<span>${r.name}</span> <button class="x" title="Remove">×</button>`;
+    li.querySelector('.x').onclick = () => removeFromPlan(id);
+    planUl.appendChild(li);
+  }
+  // Also render aggregated ingredients
+  const agg = aggregatePlanIngredients();
+  const ul = $('#planIngredients'); ul.innerHTML = '';
+  for(const key of Object.keys(agg).sort()){
+    const i = agg[key];
+    const li = document.createElement('li');
+    li.textContent = formatIngredient(i);
+    ul.appendChild(li);
+  }
+}
+
+function aggregatePlanIngredients(){
+  const recipes = store.get(KEYS.recipes, []);
+  const plan = store.get(KEYS.plan, []);
+  const items = {};
+  for(const id of plan){
+    const r = recipes.find(x=>x.id===id); if(!r) continue;
+    for(const ing of (r.ingredients||[])){
+      const key = (ing.name + '|' + (ing.unit||'')).toLowerCase();
+      if(!items[key]) items[key] = { name: ing.name, unit: ing.unit||'', qty: 0 };
+      items[key].qty += Number(ing.qty||1);
+    }
+  }
+  return items;
+}
+
+// Shopping List
+function makeShoppingList(){
+  const agg = aggregatePlanIngredients();
+  const pantry = new Set(store.get(KEYS.pantry, [] ).map(x=>x.toLowerCase()));
+  const list = Object.values(agg).filter(i => !pantry.has(i.name.toLowerCase()));
+  const checked = store.get(KEYS.shoppingChecked, {});
+  renderShopping(list, checked);
+}
+
+function renderShopping(list, checked){
+  const ul = $('#shoppingList'); ul.innerHTML = '';
+  for(const i of list.sort((a,b)=>a.name.localeCompare(b.name))){
+    const id = (i.name + '|' + i.unit).toLowerCase();
+    const li = document.createElement('li');
+    const cb = document.createElement('input'); cb.type='checkbox'; cb.checked=!!checked[id];
+    cb.onchange = () => { checked[id] = cb.checked; store.set(KEYS.shoppingChecked, checked); };
+    const label = document.createElement('label'); label.textContent = formatIngredient(i);
+    li.appendChild(cb); li.appendChild(label);
+    ul.appendChild(li);
+  }
+}
+
+function toggleAllPurchased(){
+  const checked = store.get(KEYS.shoppingChecked, {});
+  const boxes = $$('#shoppingList input[type=checkbox]');
+  const allChecked = boxes.every(b=>b.checked);
+  for(const b of boxes){ b.checked = !allChecked; const id = b.nextSibling.textContent.toLowerCase(); checked[id] = b.checked; }
+  store.set(KEYS.shoppingChecked, checked);
+}
+
+function clearPurchased(){
+  const checked = store.get(KEYS.shoppingChecked, {});
+  for(const k of Object.keys(checked)) if(checked[k]) delete checked[k];
+  store.set(KEYS.shoppingChecked, checked);
+  makeShoppingList();
+}
+
+// Pantry
+function renderPantry(){
+  const list = store.get(KEYS.pantry, []);
+  const ul = $('#pantryList'); ul.innerHTML = '';
+  for(const name of list.sort((a,b)=>a.localeCompare(b))){
+    const li = document.createElement('li'); li.className='chip';
+    li.innerHTML = `<span>${name}</span> <button class="x">×</button>`;
+    li.querySelector('.x').onclick = () => { removePantry(name); };
+    ul.appendChild(li);
+  }
+}
+
+function addPantry(name){
+  name = (name || $('#pantryInput').value).trim(); if(!name) return;
+  const list = new Set(store.get(KEYS.pantry, [])); list.add(name);
+  store.set(KEYS.pantry, Array.from(list));
+  $('#pantryInput').value='';
+  renderPantry();
+}
+
+function removePantry(name){
+  const list = store.get(KEYS.pantry, []).filter(x=>x!==name);
+  store.set(KEYS.pantry, list);
+  renderPantry();
+}
+
+function clearPantry(){ store.set(KEYS.pantry, []); renderPantry(); }
+
+// Import/Export
+function exportData(){
+  const data = {
+    recipes: store.get(KEYS.recipes, []),
+    plan: store.get(KEYS.plan, []),
+    pantry: store.get(KEYS.pantry, []),
+    shoppingChecked: store.get(KEYS.shoppingChecked, {})
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download='recipebox-data.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importData(file){
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if(data.recipes) store.set(KEYS.recipes, data.recipes);
+      if(data.plan) store.set(KEYS.plan, data.plan);
+      if(data.pantry) store.set(KEYS.pantry, data.pantry);
+      if(data.shoppingChecked) store.set(KEYS.shoppingChecked, data.shoppingChecked);
+      renderRecipes(); refreshPlanSelect(); renderPantry(); makeShoppingList();
+      alert('Import complete!');
+    } catch(e){ alert('Invalid file.'); }
+  };
+  reader.readAsText(file);
+}
+
+// Events
+window.addEventListener('DOMContentLoaded', () => {
+  // Tabs
+  $$('.tab-btn').forEach(b => b.onclick = () => activateTab(b.dataset.tab));
+  $$('.tab-btn')[0].classList.add('active');
+
+  $('#search').oninput = renderRecipes;
+  $('#addRecipeBtn').onclick = () => openRecipeDialog();
+  $('#saveRecipeBtn').onclick = (e) => { e.preventDefault(); saveRecipeFromDialog(); };
+
+  $('#addToPlanBtn').onclick = () => addToPlan();
+  $('#clearPlanBtn').onclick = () => { if(confirm('Clear plan?')) clearPlan(); };
+  $('#makeShoppingBtn').onclick = () => makeShoppingList();
+
+  $('#toggleAllPurchased').onclick = toggleAllPurchased;
+  $('#clearPurchased').onclick = clearPurchased;
+
+  $('#addPantryBtn').onclick = () => addPantry();
+  $('#clearPantryBtn').onclick = () => { if(confirm('Clear pantry?')) clearPantry(); };
+
+  $('#exportBtn').onclick = exportData;
+  $('#importFile').onchange = (e) => { const f = e.target.files[0]; if(f) importData(f); };
+
+  renderRecipes(); refreshPlanSelect(); renderPantry(); makeShoppingList();
+  loadSampleIfEmpty();
+
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('service-worker.js');
+  }
+});
